@@ -21,7 +21,6 @@ package org.apache.hadoop.hive.ql.io.orc;
 import static org.apache.hadoop.hive.conf.HiveConf.ConfVars.HIVE_ORC_ZEROCOPY;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -48,7 +47,6 @@ import org.apache.hadoop.hive.ql.io.orc.RecordReaderImpl.BufferChunk;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.protobuf.CodedInputStream;
-import com.google.protobuf.InvalidProtocolBufferException;
 
 public class ReaderImpl implements Reader {
 
@@ -471,42 +469,14 @@ public class ReaderImpl implements Reader {
       int footerBufferSize = footerBuffer.limit() - footerBuffer.position() - metadataSize;
       footerBuffer.limit(position + metadataSize);
 
-      InputStream instream = InStream.create("metadata", Lists.<DiskRange>newArrayList(
-          new BufferChunk(footerBuffer, 0)), metadataSize, codec, bufferSize);
-      CodedInputStream in = CodedInputStream.newInstance(instream);
-      int msgLimit = DEFAULT_PROTOBUF_MESSAGE_LIMIT;
-      OrcProto.Metadata meta = null;
-      do {
-        try {
-          in.setSizeLimit(msgLimit);
-          meta = OrcProto.Metadata.parseFrom(in);
-        } catch (InvalidProtocolBufferException e) {
-          if (e.getMessage().contains("Protocol message was too large")) {
-            LOG.warn("Metadata section is larger than " + msgLimit + " bytes. Increasing the max" +
-                " size of the coded input stream." );
-
-            msgLimit = msgLimit << 1;
-            if (msgLimit > PROTOBUF_MESSAGE_MAX_LIMIT) {
-              LOG.error("Metadata section exceeds max protobuf message size of " +
-                  PROTOBUF_MESSAGE_MAX_LIMIT + " bytes.");
-              throw e;
-            }
-
-            // we must have failed in the middle of reading instream and instream doesn't support
-            // resetting the stream
-            instream = InStream.create("metadata", Lists.<DiskRange>newArrayList(
-                new BufferChunk(footerBuffer, 0)), metadataSize, codec, bufferSize);
-            in = CodedInputStream.newInstance(instream);
-          } else {
-            throw e;
-          }
-        }
-      } while (meta == null);
-      this.metadata = meta;
+      CodedInputStream instream = InStream.createCodedInputStream("metadata",
+          Lists.<DiskRange>newArrayList(new BufferChunk(footerBuffer, 0)), metadataSize,
+          codec, bufferSize);
+      this.metadata = OrcProto.Metadata.parseFrom(instream);
 
       footerBuffer.position(position + metadataSize);
       footerBuffer.limit(position + metadataSize + footerBufferSize);
-      instream = InStream.create("footer", Lists.<DiskRange>newArrayList(
+      instream = InStream.createCodedInputStream("footer", Lists.<DiskRange>newArrayList(
           new BufferChunk(footerBuffer, 0)), footerBufferSize, codec, bufferSize);
       this.footer = OrcProto.Footer.parseFrom(instream);
 
