@@ -2476,26 +2476,29 @@ private void constructOneLBLocationMap(FileStatus fSta,
         files = new FileStatus[]{src};
       }
 
-      for (FileStatus srcFile : files) {
-        final Path srcP = srcFile.getPath();
-        final boolean needToCopy = needToCopy(srcP, destf, srcFs, destFs);
-        // Strip off the file type, if any so we don't make:
-        // 000000_0.gz -> 000000_0.gz_copy_1
-        final String name;
-        final String filetype;
-        String itemName = srcP.getName();
-        int index = itemName.lastIndexOf('.');
-        if (index >= 0) {
-          filetype = itemName.substring(index);
-          name = itemName.substring(0, index);
-        } else {
-          name = itemName;
-          filetype = "";
-        }
+      final SessionState parentSession = SessionState.get();
+      for (final FileStatus srcFile : files) {
 
         futures.add(pool.submit(new Callable<ObjectPair<Path, Path>>() {
           @Override
           public ObjectPair<Path, Path> call() throws Exception {
+            SessionState.setCurrentSessionState(parentSession);
+            final Path srcP = srcFile.getPath();
+            final boolean needToCopy = needToCopy(srcP, destf, srcFs, destFs);
+            // Strip off the file type, if any so we don't make:
+            // 000000_0.gz -> 000000_0.gz_copy_1
+            final String name;
+            final String filetype;
+            String itemName = srcP.getName();
+            int index = itemName.lastIndexOf('.');
+            if (index >= 0) {
+              filetype = itemName.substring(index);
+              name = itemName.substring(0, index);
+            } else {
+              name = itemName;
+               filetype = "";
+            }
+
             Path destPath = new Path(destf, srcP.getName());
             if (!needToCopy && !isSrcLocal) {
               for (int counter = 1; !destFs.rename(srcP, destPath); counter++) {
@@ -2505,7 +2508,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
               destPath = mvFile(conf, srcP, destPath, isSrcLocal, srcFs, destFs, name, filetype);
             }
             if (inheritPerms) {
-              ShimLoader.getHadoopShims().setFullFileStatus(conf, fullDestStatus, destFs, destf);
+              ShimLoader.getHadoopShims().setFullFileStatus(conf, fullDestStatus, destFs, destPath);
             }
             if (null != newFiles) {
               newFiles.add(destPath);

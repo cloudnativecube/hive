@@ -32,7 +32,7 @@ public abstract class ShimLoader {
   public static String HADOOP20SVERSIONNAME = "0.20S";
   public static String HADOOP23VERSIONNAME = "0.23";
 
-  private static HadoopShims hadoopShims;
+  private static volatile HadoopShims hadoopShims;
   private static JettyShims jettyShims;
   private static AppenderSkeleton eventCounter;
   private static HadoopThriftAuthBridge hadoopThriftAuthBridge;
@@ -95,9 +95,13 @@ public abstract class ShimLoader {
    * Factory method to get an instance of HadoopShims based on the
    * version of Hadoop on the classpath.
    */
-  public static synchronized HadoopShims getHadoopShims() {
+  public static HadoopShims getHadoopShims() {
     if (hadoopShims == null) {
-      hadoopShims = loadShims(HADOOP_SHIM_CLASSES, HadoopShims.class);
+      synchronized (ShimLoader.class) {
+        if (hadoopShims == null) {
+          hadoopShims = loadShims(HADOOP_SHIM_CLASSES, HadoopShims.class);
+        }
+      }
     }
     return hadoopShims;
   }
