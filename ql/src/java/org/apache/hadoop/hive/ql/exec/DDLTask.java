@@ -62,6 +62,7 @@ import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.common.type.HiveDecimal;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.hive.io.HdfsUtils;
 import org.apache.hadoop.hive.metastore.MetaStoreUtils;
 import org.apache.hadoop.hive.metastore.PartitionDropOptions;
 import org.apache.hadoop.hive.metastore.ProtectMode;
@@ -4362,12 +4363,11 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
       HadoopShims shim = ShimLoader.getHadoopShims();
       for (Path location : getLocations(db, table, partSpec)) {
         FileSystem fs = location.getFileSystem(conf);
-        
-        HdfsFileStatus fullFileStatus = shim.getFullFileStatus(conf, fs, location);
+        HdfsUtils.HadoopFileStatus status = new HdfsUtils.HadoopFileStatus(conf, fs, location);
         fs.delete(location, true);
         fs.mkdirs(location);
         try {
-          shim.setFullFileStatus(conf, fullFileStatus, fs, location);
+          HdfsUtils.setFullFileStatus(conf, status, fs, location, false);
         } catch (Exception e) {
           LOG.warn("Error setting permissions of " + location, e);
         }

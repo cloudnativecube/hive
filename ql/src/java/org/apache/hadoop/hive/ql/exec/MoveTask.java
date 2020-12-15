@@ -27,6 +27,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.common.FileUtils;
 import org.apache.hadoop.hive.common.HiveStatsUtils;
 import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.io.HdfsUtils;
 import org.apache.hadoop.hive.metastore.MetaStoreUtils;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.InvalidOperationException;
@@ -164,8 +165,7 @@ public class MoveTask extends Task<MoveWork> implements Serializable {
       HadoopShims shims = ShimLoader.getHadoopShims();
       if (HiveConf.getBoolVar(conf, HiveConf.ConfVars.HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS)) {
         try {
-          HadoopShims.HdfsFileStatus status = shims.getFullFileStatus(conf, fs, actualPath);
-          shims.setFullFileStatus(conf, status, fs, actualPath);
+          HdfsUtils.setFullFileStatus(conf, new HdfsUtils.HadoopFileStatus(conf, fs, actualPath), fs, mkDirPath, true);
         } catch (Exception e) {
           LOG.warn("Error setting permissions or group of " + actualPath, e);
         }

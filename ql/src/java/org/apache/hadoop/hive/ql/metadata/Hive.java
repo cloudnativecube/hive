@@ -60,6 +60,7 @@ import org.apache.hadoop.hive.common.classification.InterfaceAudience.LimitedPri
 import org.apache.hadoop.hive.common.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.hive.io.HdfsUtils;
 import org.apache.hadoop.hive.metastore.HiveMetaException;
 import org.apache.hadoop.hive.metastore.HiveMetaHook;
 import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
@@ -2448,9 +2449,9 @@ private void constructOneLBLocationMap(FileStatus fSta,
   private static void copyFiles(final HiveConf conf, final FileSystem destFs,
       FileStatus[] srcs, final FileSystem srcFs, final Path destf, final boolean isSrcLocal, final List<Path> newFiles)
           throws HiveException {
-    final HadoopShims.HdfsFileStatus fullDestStatus;
+    final HdfsUtils.HadoopFileStatus fullDestStatus;
     try {
-      fullDestStatus = ShimLoader.getHadoopShims().getFullFileStatus(conf, destFs, destf);
+      fullDestStatus = new HdfsUtils.HadoopFileStatus(conf, destFs, destf);
     } catch (IOException e1) {
       throw new HiveException(e1);
     }
@@ -2510,7 +2511,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
               destPath = mvFile(conf, srcP, destPath, isSrcLocal, srcFs, destFs, name, filetype);
             }
             if (inheritPerms) {
-              ShimLoader.getHadoopShims().setFullFileStatus(conf, fullDestStatus, destFs, destPath);
+              HdfsUtils.setFullFileStatus(conf, fullDestStatus, destFs, destPath, false);
             }
             if (null != newFiles) {
               newFiles.add(destPath);
@@ -2610,9 +2611,8 @@ private void constructOneLBLocationMap(FileStatus fSta,
   //method is called. when the replace value is true, this method works a little different
   //from mv command if the destf is a directory, it replaces the destf instead of moving under
   //the destf. in this case, the replaced destf still preserves the original destf's permission
-  public static boolean moveFile(HiveConf conf, Path srcf, final Path destf,
+  public static boolean moveFile(final HiveConf conf, Path srcf, final Path destf,
       boolean replace, boolean isSrcLocal) throws HiveException {
-    boolean success = false;
     final FileSystem srcFs, destFs;
     try {
       destFs = destf.getFileSystem(conf);
@@ -2628,10 +2628,9 @@ private void constructOneLBLocationMap(FileStatus fSta,
     }
 
     //needed for perm inheritance.
-    boolean inheritPerms = HiveConf.getBoolVar(conf,
+    final boolean inheritPerms = HiveConf.getBoolVar(conf,
         HiveConf.ConfVars.HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS);
-    HadoopShims shims = ShimLoader.getHadoopShims();
-    HadoopShims.HdfsFileStatus destStatus = null;
+    HdfsUtils.HadoopFileStatus destStatus = null;
 
     // If source path is a subdirectory of the destination path:
     //   ex: INSERT OVERWRITE DIRECTORY 'target/warehouse/dest4.out' SELECT src.value WHERE src.key >= 300;
@@ -2643,93 +2642,100 @@ private void constructOneLBLocationMap(FileStatus fSta,
     try {
       if (inheritPerms || replace) {
         try{
-          destStatus = shims.getFullFileStatus(conf, destFs, destf);
+          destStatus = new HdfsUtils.HadoopFileStatus(conf, destFs, destf);
           //if destf is an existing directory:
           //if replace is true, delete followed by rename(mv) is equivalent to replace
           //if replace is false, rename (mv) actually move the src under dest dir
           //if destf is an existing file, rename is actually a replace, and do not need
           // to delete the file first
           if (replace && !destIsSubDir) {
-            LOG.debug("The path " + destf.toString() + " is deleted");
             destFs.delete(destf, true);
+            LOG.debug("The path " + destf.toString() + " is deleted");
           }
         } catch (FileNotFoundException ignore) {
           //if dest dir does not exist, any re
           if (inheritPerms) {
-            destStatus = shims.getFullFileStatus(conf, destFs, destf.getParent());
+            destStatus = new HdfsUtils.HadoopFileStatus(conf, destFs, destf.getParent());
           }
         }
       }
+      final HdfsUtils.HadoopFileStatus desiredStatus = destStatus;
+      final SessionState parentSession = SessionState.get();
       if (isSrcLocal) {
         // For local src file, copy to hdfs
         destFs.copyFromLocalFile(srcf, destf);
-        success = true;
+        if (inheritPerms) {
+          try {
+            HdfsUtils.setFullFileStatus(conf, destStatus, destFs, destf, true);
+          } catch (IOException e) {
+            LOG.warn("Error setting permission of file " + destf + ": " + e.getMessage(), e);
+          }
+        }
+        return true;
       } else {
         if (needToCopy(srcf, destf, srcFs, destFs)) {
           //copy if across file system or encryption zones.
-          LOG.info("Copying source " + srcf + " to " + destf + " because HDFS encryption zones are different.");
-          success = FileUtils.copy(srcf.getFileSystem(conf), srcf, destf.getFileSystem(conf), destf,
+          LOG.debug("Copying source " + srcf + " to " + destf + " because HDFS encryption zones are different.");
+          return FileUtils.copy(srcf.getFileSystem(conf), srcf, destf.getFileSystem(conf), destf,
               true,    // delete source
               replace, // overwrite destination
               conf);
         } else {
           if (destIsSubDir) {
             FileStatus[] srcs = destFs.listStatus(srcf, FileUtils.HIDDEN_FILES_PATH_FILTER);
-            if (srcs.length == 0) {
-              success = true; // Nothing to move.
-            } else {
-              List<Future<Boolean>> futures = new LinkedList<>();
-              final ExecutorService pool = Executors.newFixedThreadPool(
-                  conf.getIntVar(ConfVars.HIVE_MOVE_FILES_THREAD_COUNT),
-                  new ThreadFactoryBuilder().setDaemon(true).setNameFormat("MoveDir-Thread-%d").build());
-              /* Move files one by one because source is a subdirectory of destination */
-              for (final FileStatus status : srcs) {
-                futures.add(pool.submit(new Callable<Boolean>() {
-                  @Override
-                  public Boolean call() throws Exception {
-                    return destFs.rename(status.getPath(), destf);
+            List<Future<Void>> futures = new LinkedList<>();
+            final ExecutorService pool = Executors.newFixedThreadPool(
+                conf.getIntVar(ConfVars.HIVE_MOVE_FILES_THREAD_COUNT),
+                new ThreadFactoryBuilder().setDaemon(true).setNameFormat("MoveDir-Thread-%d").build());
+            /* Move files one by one because source is a subdirectory of destination */
+            for (final FileStatus status : srcs) {
+              futures.add(pool.submit(new Callable<Void>() {
+                @Override
+                public Void call() throws Exception {
+                  SessionState.setCurrentSessionState(parentSession);
+                  Path destPath = new Path(destf, status.getPath().getName());
+                  try {
+                    if(destFs.rename(status.getPath(), destf)) {
+                      if (inheritPerms) {
+                        HdfsUtils.setFullFileStatus(conf, desiredStatus, destFs, destPath, false);
+                      }
+                    } else {
+                      throw new IOException("rename for src path: " + status.getPath() + " to dest path:"
+                          + destPath + " returned false");
+                    }
+                  } catch (IOException ioe) {
+                    LOG.error("Failed to rename/set permissions. Src path: {} Dest path: {}" + status.getPath() + destPath);
+                    throw ioe;
                   }
-                }));
-              }
-
-              pool.shutdown();
-              boolean allFutures = true;
-              for (Future<Boolean> future : futures) {
-                try {
-                  Boolean result = future.get();
-                  allFutures &= result;
-                  if (!result) {
-                    LOG.debug("Failed to rename.");
-                    pool.shutdownNow();
-                  }
-                } catch (Exception e) {
-                  LOG.debug("Failed to rename." + e.getMessage());
-                  pool.shutdownNow();
-                  throw new HiveException(e.getCause());
+                  return null;
                 }
-              }
-              success = allFutures;
+              }));
             }
+            pool.shutdown();
+            for (Future<Void> future : futures) {
+              try {
+                future.get();
+              } catch (Exception e) {
+                LOG.debug(e.getMessage());
+                pool.shutdownNow();
+                throw new HiveException(e.getCause());
+              }
+            }
+            return true;
           } else {
-            success = destFs.rename(srcf, destf);
+            if (destFs.rename(srcf, destf)) {
+              if (inheritPerms) {
+                HdfsUtils.setFullFileStatus(conf, destStatus, destFs, destf, true);
+              }
+              return true;
+            }
+            return false;
           }
         }
       }
-
-      LOG.info((replace ? "Replacing src:" : "Renaming src: ") + srcf.toString() +
-        ", dest: " + destf.toString()  + ", Status:" + success);
     } catch (IOException ioe) {
       throw new HiveException("Unable to move source " + srcf + " to destination " + destf, ioe);
     }
-
-    if (success && inheritPerms) {
-      try {
-        ShimLoader.getHadoopShims().setFullFileStatus(conf, destStatus, destFs, destf);
-      } catch (IOException e) {
-        LOG.warn("Error setting permission of file " + destf + ": "+ e.getMessage(), e);
-      }
-    }
-    return success;
   }
 
   /**
