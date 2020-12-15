@@ -42,6 +42,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -797,7 +798,7 @@ public class Hive {
       }
       if (baseTbl.isTemporary()) {
         throw new HiveException("tableName=" + tableName
-            + " is a TEMPORARY TABLE. Index on TEMPORARY TABLE is not supported.");
+          + " is a TEMPORARY TABLE. Index on TEMPORARY TABLE is not supported.");
       }
 
       org.apache.hadoop.hive.metastore.api.Table temp = null;
@@ -1404,7 +1405,7 @@ public class Hive {
 
       List<Path> newFiles = null;
       if (replace || (oldPart == null && !isAcid)) {
-        Hive.replaceFiles(tbl.getPath(), loadPath, newPartPath, oldPartPath, getConf(),
+        replaceFiles(tbl.getPath(), loadPath, newPartPath, oldPartPath, getConf(),
             isSrcLocal);
       } else {
         if (conf.getBoolVar(ConfVars.FIRE_EVENTS_FOR_DML) && !tbl.isTemporary() && oldPart != null) {
@@ -1580,7 +1581,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
         throw new HiveException("Number of dynamic partitions created is " + validPartitions.size()
             + ", which is more than "
             + conf.getIntVar(HiveConf.ConfVars.DYNAMICPARTITIONMAXPARTS)
-            +". To solve this try to set " + HiveConf.ConfVars.DYNAMICPARTITIONMAXPARTS.varname
+            + ". To solve this try to set " + HiveConf.ConfVars.DYNAMICPARTITIONMAXPARTS.varname
             + " to at least " + validPartitions.size() + '.');
       }
 
@@ -1854,7 +1855,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
       if (forceCreate) {
         if (tpart == null) {
           LOG.debug("creating partition for table " + tbl.getTableName()
-                    + " with partition spec : " + partSpec);
+              + " with partition spec : " + partSpec);
           try {
             tpart = getMSC().appendPartition(tbl.getDbName(), tbl.getTableName(), pvals);
           } catch (AlreadyExistsException aee) {
@@ -1915,7 +1916,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
       boolean inheritTableSpecs,
       String partPath) throws HiveException, InvalidOperationException {
     LOG.debug("altering partition for table " + tbl.getTableName() + " with partition spec : "
-        + partSpec);
+      + partSpec);
     if (inheritTableSpecs) {
       tpart.getSd().setOutputFormat(tbl.getTTable().getSd().getOutputFormat());
       tpart.getSd().setInputFormat(tbl.getTTable().getSd().getInputFormat());
@@ -2701,7 +2702,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
                       }
                     } else {
                       throw new IOException("rename for src path: " + status.getPath() + " to dest path:"
-                          + destPath + " returned false");
+                        + destPath + " returned false");
                     }
                   } catch (IOException ioe) {
                     LOG.error("Failed to rename/set permissions. Src path: {} Dest path: {}" + status.getPath() + destPath);
@@ -2906,7 +2907,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
    * @param isSrcLocal
    *          If the source directory is LOCAL
    */
-  protected static void replaceFiles(Path tablePath, Path srcf, Path destf, Path oldPath, HiveConf conf,
+  protected void replaceFiles(Path tablePath, Path srcf, Path destf, Path oldPath, HiveConf conf,
           boolean isSrcLocal) throws HiveException {
     try {
       FileSystem destFs = destf.getFileSystem(conf);
@@ -2942,7 +2943,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
               // existing content might result in incorrect (extra) data.
               // But not sure why we changed not to delete the oldPath in HIVE-8750 if it is
               // not the destf or its subdir?
-              oldPathDeleted = FileUtils.trashFilesUnderDir(fs2, oldPath, conf);
+              oldPathDeleted = trashFilesUnderDir(fs2, oldPath, conf);
             }
             if (inheritPerms) {
               inheritFromTable(tablePath, destf, conf, destFs);
@@ -2952,7 +2953,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
           if (isOldPathUnderDestf) {
             // if oldPath is a subdir of destf but it could not be cleaned
             throw new HiveException("Directory " + oldPath.toString()
-                + " could not be cleaned up.", e);
+              + " could not be cleaned up.", e);
           } else {
             //swallow the exception since it won't affect the final result
             LOG.warn("Directory " + oldPath.toString() + " cannot be cleaned: " + e, e);
@@ -2968,7 +2969,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
       boolean destfExist = FileUtils.mkdir(destFs, destf, true, conf);
       if(!destfExist) {
         throw new IOException("Directory " + destf.toString()
-            + " does not exist and could not be created.");
+         + " does not exist and could not be created.");
       }
 
       // Two cases:
@@ -2991,6 +2992,46 @@ private void constructOneLBLocationMap(FileStatus fSta,
     } catch (IOException e) {
       throw new HiveException(e.getMessage(), e);
     }
+  }
+
+  /**
+   * Trashes or deletes all files under a directory. Leaves the directory as is.
+   * @param fs FileSystem to use
+   * @param f path of directory
+   * @param conf hive configuration
+   * @return true if deletion successful
+   * @throws IOException
+   */
+  private boolean trashFilesUnderDir(final FileSystem fs, Path f, final Configuration conf)
+      throws IOException {
+    FileStatus[] statuses = fs.listStatus(f, FileUtils.HIDDEN_FILES_PATH_FILTER);
+    boolean result = true;
+    final List<Future<Boolean>> futures = new LinkedList<>();
+    final ExecutorService pool = Executors.newFixedThreadPool(
+        conf.getInt(ConfVars.HIVE_MOVE_FILES_THREAD_COUNT.varname, 25),
+        new ThreadFactoryBuilder().setDaemon(true).setNameFormat("Delete-Thread-%d").build());
+    final SessionState parentSession = SessionState.get();
+    for (final FileStatus status : statuses) {
+      futures.add(pool.submit(new Callable<Boolean>() {
+
+        @Override
+        public Boolean call() throws Exception {
+          SessionState.setCurrentSessionState(parentSession);
+          return FileUtils.moveToTrash(fs, status.getPath(), conf);
+        }
+      }));
+    }
+    pool.shutdown();
+    for (Future<Boolean> future : futures) {
+      try {
+        result &= future.get();
+      } catch (InterruptedException | ExecutionException e) {
+        LOG.error("Failed to delete: ", e);
+        pool.shutdownNow();
+        throw new IOException(e);
+      }
+    }
+    return result;
   }
 
   /**
@@ -3117,10 +3158,10 @@ private void constructOneLBLocationMap(FileStatus fSta,
       return MetaStoreUtils.getFieldsFromDeserializer(name, serde);
     } catch (SerDeException e) {
       throw new HiveException("Error in getting fields from serde. "
-          + e.getMessage(), e);
+        + e.getMessage(), e);
     } catch (MetaException e) {
       throw new HiveException("Error in getting fields from serde."
-          + e.getMessage(), e);
+        + e.getMessage(), e);
     }
   }
 
@@ -3356,7 +3397,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
             phaseInfoLogged = logDumpPhase(phase);
           }
           LOG.info("Total time spent in this metastore function was greater than 1000ms : "
-              + callTime);
+            + callTime);
         }
       }
     }

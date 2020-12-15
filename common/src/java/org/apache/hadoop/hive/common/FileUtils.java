@@ -37,6 +37,7 @@ import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
+import org.apache.hadoop.fs.Trash;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.io.HdfsUtils;
@@ -569,24 +570,6 @@ public final class FileUtils {
   }
 
   /**
-   * Deletes all files under a directory, sending them to the trash.  Leaves the directory as is.
-   * @param fs FileSystem to use
-   * @param f path of directory
-   * @param conf hive configuration
-   * @return true if deletion successful
-   * @throws FileNotFoundException
-   * @throws IOException
-   */
-  public static boolean trashFilesUnderDir(FileSystem fs, Path f, Configuration conf) throws FileNotFoundException, IOException {
-    FileStatus[] statuses = fs.listStatus(f, HIDDEN_FILES_PATH_FILTER);
-    boolean result = true;
-    for (FileStatus status : statuses) {
-      result = result & moveToTrash(fs, status.getPath(), conf);
-    }
-    return result;
-  }
-
-  /**
    * Move a particular file or directory to the trash.
    * @param fs FileSystem to use
    * @param f path of file or directory to move to trash.
@@ -594,19 +577,27 @@ public final class FileUtils {
    * @return true if move successful
    * @throws IOException
    */
-  public static boolean moveToTrash(FileSystem fs, Path f, Configuration conf) throws IOException {
-    LOG.info("deleting  " + f);
-    HadoopShims hadoopShim = ShimLoader.getHadoopShims();
-
-    if (hadoopShim.moveToAppropriateTrash(fs, f, conf)) {
-      LOG.info("Moved to trash: " + f);
-      return true;
+  public static boolean moveToTrash(FileSystem fs, Path f, Configuration conf)
+      throws IOException {
+    LOG.debug("deleting  " + f);
+    boolean result = false;
+    try {
+      result = Trash.moveToAppropriateTrash(fs, f, conf);
+      if (result) {
+        LOG.trace("Moved to trash: " + f);
+        return true;
+      }
+    } catch (IOException ioe) {
+      // for whatever failure reason including that trash has lower encryption zone
+      // retry with force delete
+      LOG.warn(ioe.getMessage() + "; Force to delete it.");
     }
 
-    boolean result = fs.delete(f, true);
+    result = fs.delete(f, true);
     if (!result) {
       LOG.error("Failed to delete " + f);
     }
+
     return result;
   }
 
