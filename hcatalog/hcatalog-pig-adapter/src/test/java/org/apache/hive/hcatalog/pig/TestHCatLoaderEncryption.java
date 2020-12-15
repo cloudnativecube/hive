@@ -18,18 +18,6 @@
  */
 package org.apache.hive.hcatalog.pig;
 
-import java.io.File;
-import java.io.IOException;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 import org.apache.commons.io.FileUtils;
 
 import org.apache.hadoop.conf.Configuration;
@@ -79,7 +67,23 @@ import org.junit.runners.Parameterized;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.junit.Assert.*;
+import java.io.File;
+import java.io.IOException;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 @RunWith(Parameterized.class)
@@ -97,9 +101,6 @@ public class TestHCatLoaderEncryption {
   private HadoopShims.MiniDFSShim dfs = null;
   private HadoopShims.HdfsEncryptionShim hes = null;
   private final String[] testOnlyCommands = new String[]{"crypto"};
-  private final String[] encryptionUnsupportedHadoopVersion = new String[]{ShimLoader
-      .HADOOP20SVERSIONNAME};
-  private boolean isEncryptionTestEnabled = true;
   private Driver driver;
   private Map<Integer, Pair<Integer, String>> basicInputData;
   private static List<HCatRecord> readRecords = new ArrayList<HCatRecord>();
@@ -186,7 +187,6 @@ public class TestHCatLoaderEncryption {
 
     driver = new Driver(hiveConf);
 
-    checkShimLoaderVersion();
     initEncryptionShim(hiveConf);
     String encryptedTablePath =  TEST_WAREHOUSE_DIR + "/encryptedTable";
     SessionState.start(new CliSessionState(hiveConf));
@@ -221,19 +221,7 @@ public class TestHCatLoaderEncryption {
     server.executeBatch();
   }
 
-  void checkShimLoaderVersion() {
-    for (String v : encryptionUnsupportedHadoopVersion) {
-      if (ShimLoader.getMajorVersion().equals(v)) {
-        isEncryptionTestEnabled = false;
-        return;
-      }
-    }
-  }
-
   void initEncryptionShim(HiveConf conf) throws IOException {
-    if (!isEncryptionTestEnabled) {
-      return;
-    }
     FileSystem fs;
     HadoopShims shims = ShimLoader.getHadoopShims();
     conf.set(SECURITY_KEY_PROVIDER_URI_NAME, getKeyProviderURI());
@@ -258,9 +246,6 @@ public class TestHCatLoaderEncryption {
   }
 
   private void associateEncryptionZoneWithPath(String path) throws SQLException, CommandNeedRetryException {
-    if (!isEncryptionTestEnabled) {
-      return;
-    }
     LOG.info(this.storageFormat + ": associateEncryptionZoneWithPath");
     assumeTrue(!TestUtil.shouldSkip(storageFormat, DISABLED_STORAGE_FORMATS));
     enableTestOnlyCmd(SessionState.get().getConf());
@@ -279,9 +264,6 @@ public class TestHCatLoaderEncryption {
   }
 
   private void removeEncryptionZone() throws SQLException, CommandNeedRetryException {
-    if (!isEncryptionTestEnabled) {
-      return;
-    }
     LOG.info(this.storageFormat + ": removeEncryptionZone");
     enableTestOnlyCmd(SessionState.get().getConf());
     CommandProcessor crypto = getTestCommand("crypto");
@@ -323,7 +305,6 @@ public class TestHCatLoaderEncryption {
 
   @Test
   public void testReadDataFromEncryptedHiveTableByPig() throws IOException {
-    assumeTrue(isEncryptionTestEnabled);
     assumeTrue(!TestUtil.shouldSkip(storageFormat, DISABLED_STORAGE_FORMATS));
     PigServer server = new PigServer(ExecType.LOCAL);
 
@@ -346,7 +327,6 @@ public class TestHCatLoaderEncryption {
 
   @Test
   public void testReadDataFromEncryptedHiveTableByHCatMR() throws Exception {
-    assumeTrue(isEncryptionTestEnabled);
     assumeTrue(!TestUtil.shouldSkip(storageFormat, DISABLED_STORAGE_FORMATS));
 
     readRecords.clear();

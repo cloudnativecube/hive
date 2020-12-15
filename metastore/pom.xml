@@ -51,6 +51,11 @@
       <version>${guava.version}</version>
     </dependency>
     <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-client</artifactId>
+      <version>${hbase.version}</version>
+    </dependency>
+    <dependency>
       <groupId>com.jolbox</groupId>
       <artifactId>bonecp</artifactId>
       <version>${bonecp.version}</version>
@@ -112,6 +117,18 @@
       <version>${antlr.version}</version>
     </dependency>
     <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>${hadoop.version}</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-mapreduce-client-core</artifactId>
+      <version>${hadoop.version}</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
       <groupId>org.apache.thrift</groupId>
       <artifactId>libfb303</artifactId>
       <version>${libfb303.version}</version>
@@ -137,34 +154,6 @@
   </dependencies>
 
   <profiles>
-    <profile>
-      <id>hadoop-1</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-core</artifactId>
-          <version>${hadoop-20S.version}</version>
-         <optional>true</optional>
-        </dependency>
-      </dependencies>
-    </profile>
-   <profile>
-      <id>hadoop-2</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-common</artifactId>
-          <version>${hadoop-23.version}</version>
-          <optional>true</optional>
-        </dependency>
-        <dependency>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-mapreduce-client-core</artifactId>
-          <version>${hadoop-23.version}</version>
-          <optional>true</optional>
-        </dependency>
-      </dependencies>
-    </profile>
     <profile>
       <id>thriftif</id>
       <build>
