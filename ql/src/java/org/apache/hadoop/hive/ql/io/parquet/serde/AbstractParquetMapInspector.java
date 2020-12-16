@@ -60,7 +60,7 @@ public abstract class AbstractParquetMapInspector implements SettableMapObjectIn
 
     if (data instanceof ArrayWritable) {
       final Writable[] mapArray = ((ArrayWritable) data).get();
-      if (mapArray == null || mapArray.length == 0) {
+      if (mapArray == null) {
         return null;
       }
 
@@ -91,7 +91,7 @@ public abstract class AbstractParquetMapInspector implements SettableMapObjectIn
     if (data instanceof ArrayWritable) {
       final Writable[] mapArray = ((ArrayWritable) data).get();
 
-      if (mapArray == null || mapArray.length == 0) {
+      if (mapArray == null) {
         return -1;
       } else {
         return mapArray.length;
