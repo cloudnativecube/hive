@@ -2927,9 +2927,6 @@ private void constructOneLBLocationMap(FileStatus fSta,
           boolean isSrcLocal) throws HiveException {
     try {
       FileSystem destFs = destf.getFileSystem(conf);
-      boolean inheritPerms = HiveConf.getBoolVar(conf,
-          HiveConf.ConfVars.HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS);
-
       // check if srcf contains nested sub-directories
       FileStatus[] srcs;
       FileSystem srcFs;
@@ -2961,9 +2958,6 @@ private void constructOneLBLocationMap(FileStatus fSta,
               // not the destf or its subdir?
               oldPathDeleted = FileUtils.moveToTrash(fs2, oldPath, conf);
             }
-            if (inheritPerms) {
-              inheritFromTable(tablePath, destf, conf, destFs);
-            }
           }
         } catch (IOException e) {
           if (isOldPathUnderDestf) {
@@ -2982,7 +2976,9 @@ private void constructOneLBLocationMap(FileStatus fSta,
 
       // first call FileUtils.mkdir to make sure that destf directory exists, if not, it creates
       // destf with inherited permissions
-      boolean destfExist = FileUtils.mkdir(destFs, destf, true, conf);
+      boolean inheritPerms = HiveConf.getBoolVar(conf, HiveConf.ConfVars
+          .HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS);
+      boolean destfExist = FileUtils.mkdir(destFs, destf, inheritPerms, conf);
       if(!destfExist) {
         throw new IOException("Directory " + destf.toString()
          + " does not exist and could not be created.");
