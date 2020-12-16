@@ -59,13 +59,11 @@ public abstract class AbstractParquetMapInspector implements SettableMapObjectIn
     }
 
     if (data instanceof ArrayWritable) {
-      final Writable[] mapContainer = ((ArrayWritable) data).get();
-
-      if (mapContainer == null || mapContainer.length == 0) {
+      final Writable[] mapArray = ((ArrayWritable) data).get();
+      if (mapArray == null || mapArray.length == 0) {
         return null;
       }
 
-      final Writable[] mapArray = ((ArrayWritable) mapContainer[0]).get();
       final Map<Writable, Writable> map = new LinkedHashMap<Writable, Writable>();
 
       for (final Writable obj : mapArray) {
@@ -91,12 +89,12 @@ public abstract class AbstractParquetMapInspector implements SettableMapObjectIn
     }
 
     if (data instanceof ArrayWritable) {
-      final Writable[] mapContainer = ((ArrayWritable) data).get();
+      final Writable[] mapArray = ((ArrayWritable) data).get();
 
-      if (mapContainer == null || mapContainer.length == 0) {
+      if (mapArray == null || mapArray.length == 0) {
         return -1;
       } else {
-        return ((ArrayWritable) mapContainer[0]).get().length;
+        return mapArray.length;
       }
     }
 
