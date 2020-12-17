@@ -2634,13 +2634,13 @@ private void constructOneLBLocationMap(FileStatus fSta,
     try {
       destFs = destf.getFileSystem(conf);
     } catch (IOException e) {
-      LOG.error(e);
+      LOG.error("Failed to get dest fs", e);
       throw new HiveException(e.getMessage(), e);
     }
     try {
       srcFs = srcf.getFileSystem(conf);
     } catch (IOException e) {
-      LOG.error(e);
+      LOG.error("Failed to get src fs", e);
       throw new HiveException(e.getMessage(), e);
     }
 
@@ -2701,41 +2701,54 @@ private void constructOneLBLocationMap(FileStatus fSta,
           if (destIsSubDir) {
             FileStatus[] srcs = destFs.listStatus(srcf, FileUtils.HIDDEN_FILES_PATH_FILTER);
             List<Future<Void>> futures = new LinkedList<>();
-            final ExecutorService pool = Executors.newFixedThreadPool(
-                conf.getIntVar(ConfVars.HIVE_MOVE_FILES_THREAD_COUNT),
-                new ThreadFactoryBuilder().setDaemon(true).setNameFormat("MoveDir-Thread-%d").build());
+            final ExecutorService pool = conf.getInt(ConfVars.HIVE_MOVE_FILES_THREAD_COUNT.varname, 25) > 0 ?
+                Executors.newFixedThreadPool(conf.getInt(ConfVars.HIVE_MOVE_FILES_THREAD_COUNT.varname, 25),
+                    new ThreadFactoryBuilder().setDaemon(true).setNameFormat("Move-Thread-%d").build()) : null;
             /* Move files one by one because source is a subdirectory of destination */
-            for (final FileStatus status : srcs) {
-              futures.add(pool.submit(new Callable<Void>() {
-                @Override
-                public Void call() throws Exception {
-                  SessionState.setCurrentSessionState(parentSession);
-                  Path destPath = new Path(destf, status.getPath().getName());
-                  try {
-                    if(destFs.rename(status.getPath(), destf)) {
-                      if (inheritPerms) {
-                        HdfsUtils.setFullFileStatus(conf, desiredStatus, destFs, destPath, false);
-                      }
-                    } else {
-                      throw new IOException("rename for src path: " + status.getPath() + " to dest path:"
-                        + destPath + " returned false");
-                    }
-                  } catch (IOException ioe) {
-                    LOG.error("Failed to rename/set permissions. Src path: {} Dest path: {}" + status.getPath() + destPath);
-                    throw ioe;
-                  }
-                  return null;
+            for (final FileStatus srcStatus : srcs) {
+              final Path destFile = new Path(destf, srcStatus.getPath().getName());
+              if (null == pool) {
+                if (!destFs.rename(srcStatus.getPath(), destFile)) {
+                  throw new IOException("rename for src path: " + srcStatus.getPath() + " to dest:"
+                      + destf + " returned false");
                 }
-              }));
+              } else {
+                futures.add(pool.submit(new Callable<Void>() {
+                  @Override
+                  public Void call() throws Exception {
+                    SessionState.setCurrentSessionState(parentSession);
+                    try {
+                      if(destFs.rename(srcStatus.getPath(), destFile)) {
+                        if (inheritPerms) {
+                          HdfsUtils.setFullFileStatus(conf, desiredStatus, destFs, destFile, false);
+                        }
+                      } else {
+                        throw new IOException("rename for src path: " + srcStatus.getPath() + " to dest path:"
+                            + destFile + " returned false");
+                      }
+                    } catch (IOException ioe) {
+                      LOG.error("Failed to rename/set permissions. Src path: {} Dest path: {}" + srcStatus.getPath() + destFile);
+                      throw ioe;
+                    }
+                    return null;
+                  }
+                }));
+              }
             }
-            pool.shutdown();
-            for (Future<Void> future : futures) {
-              try {
-                future.get();
-              } catch (Exception e) {
-                LOG.debug(e.getMessage());
-                pool.shutdownNow();
-                throw new HiveException(e.getCause());
+            if (null == pool) {
+              if (inheritPerms) {
+                HdfsUtils.setFullFileStatus(conf, desiredStatus, null, destFs, destf, true);
+              }
+            } else {
+              pool.shutdown();
+              for (Future<Void> future : futures) {
+                try {
+                  future.get();
+                } catch (Exception e) {
+                  LOG.debug(e.getMessage());
+                  pool.shutdownNow();
+                  throw new HiveException(e.getCause());
+                }
               }
             }
             return true;
